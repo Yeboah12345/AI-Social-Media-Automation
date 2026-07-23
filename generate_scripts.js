@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+const { createClient } = require('@supabase/supabase-js');
 
 // Initialize Supabase Client
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -6,7 +6,7 @@ const supabaseKey = process.env.SUPABASE_KEY;
 const geminiApiKey = process.env.GEMINI_API_KEY;
 
 if (!supabaseUrl || !supabaseKey || !geminiApiKey) {
-    console.error("Missing required environment variables!");
+    console.error("❌ Missing required environment variables!");
     process.exit(1);
 }
 
@@ -28,16 +28,16 @@ async function createCampaignAndGeneratePosts(userId, niche, postsPerDay = 1, du
         .single();
 
     if (campaignError) {
-        console.error("Error creating campaign record:", campaignError);
-        return;
+        console.error("❌ Error creating campaign record:", campaignError);
+        process.exit(1);
     }
 
     console.log(`✅ Created Campaign ID: ${campaign.id}`);
 
     // 2. Call Gemini API to generate scripts
     const totalPosts = durationDays * postsPerDay;
-    const prompt = `You are a social media expert. Generate a JSON array with exactly ${totalPosts} post objects for the niche: "${niche}".
-Return ONLY a valid JSON array. Do NOT wrap in markdown code fence blocks like \`\`\`json.
+    const prompt = `Generate a JSON array with exactly ${totalPosts} post objects for the niche: "${niche}".
+Return ONLY raw JSON array. Do NOT wrap in markdown code block fence like \`\`\`json.
 Each object must have these exact keys:
 - "day_number": integer from 1 to ${totalPosts}
 - "topic": short catchy title
@@ -53,26 +53,32 @@ Each object must have these exact keys:
 
     const data = await response.json();
     if (!response.ok) {
-        console.error("Gemini Error:", data);
-        return;
+        console.error("❌ Gemini API Error:", JSON.stringify(data));
+        process.exit(1);
     }
 
     let rawText = data.candidates[0].content.parts[0].text.trim();
-    // Clean up markdown block tags if Gemini adds them
-    if (rawText.startsWith("```json")) rawText = rawText.replace(/^```json/, "");
-    if (rawText.startsWith("```")) rawText = rawText.replace(/^```/, "");
-    if (rawText.endsWith("```")) rawText = rawText.replace(/```$/, "");
+    
+    // Clean up any markdown tags Gemini might attach
+    rawText = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
 
-    const postIdeas = JSON.parse(rawText.trim());
-    console.log(`💡 Gemini generated ${postIdeas.length} post ideas.`);
+    let postIdeas;
+    try {
+        postIdeas = JSON.parse(rawText);
+    } catch (e) {
+        console.error("❌ Failed to parse JSON response from Gemini:", e.message);
+        console.log("Raw output was:", rawText);
+        process.exit(1);
+    }
+
+    console.log(`💡 Gemini successfully generated ${postIdeas.length} post ideas.`);
 
     // 3. Prepare rows with scheduled timestamps
     const now = new Date();
     const rowsToInsert = postIdeas.map((post, index) => {
         const scheduledDate = new Date(now);
-        // Space posts apart day by day
         scheduledDate.setDate(scheduledDate.getDate() + Math.floor(index / postsPerDay));
-        scheduledDate.setHours(9, 0, 0, 0); // Set default posting time to 9:00 AM
+        scheduledDate.setHours(9, 0, 0, 0);
 
         return {
             campaign_id: campaign.id,
@@ -85,17 +91,17 @@ Each object must have these exact keys:
         };
     });
 
-    // 4. Bulk insert into Supabase `scheduled_posts` table
+    // 4. Save to Supabase
     const { error: insertError } = await supabase.from('scheduled_posts').insert(rowsToInsert);
 
     if (insertError) {
-        console.error("Error saving posts to Supabase:", insertError);
+        console.error("❌ Error saving posts to Supabase:", insertError);
+        process.exit(1);
     } else {
         console.log(`🎉 SUCCESS! Successfully populated ${rowsToInsert.length} scheduled posts into Supabase!`);
     }
 }
 
-// Run test campaign generation for a sample user ID
+// Run test campaign generation
 const sampleUserId = "00000000-0000-0000-0000-000000000000";
 createCampaignAndGeneratePosts(sampleUserId, "Artificial Intelligence & Tech News", 1, 30);
-  
