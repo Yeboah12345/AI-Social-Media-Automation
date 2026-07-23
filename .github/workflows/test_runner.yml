@@ -1,7 +1,7 @@
 name: Test Gemini AI Script Generator
 
 on:
-  workflow_dispatch: # Allows us to run this manually with a single click
+  workflow_dispatch:
 
 jobs:
   run-ai-test:
@@ -15,7 +15,12 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install Dependencies
+        run: npm install @supabase/supabase-js
+
       - name: Execute Gemini AI Script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: node generate_scripts.js
