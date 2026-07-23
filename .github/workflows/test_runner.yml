@@ -1,0 +1,21 @@
+name: Test Gemini AI Script Generator
+
+on:
+  workflow_dispatch: # Allows us to run this manually with a single click
+
+jobs:
+  run-ai-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Execute Gemini AI Script
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: node generate_scripts.js
