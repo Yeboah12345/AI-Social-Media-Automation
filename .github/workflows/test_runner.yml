@@ -13,10 +13,10 @@ jobs:
       - name: Setup Node.js Environment
         uses: actions/setup-node@v4
         with:
-          node-version: '22' # Upgraded to 22 for native WebSocket support
+          node-version: '22'
 
       - name: Install Dependencies
-        run: npm install @supabase/supabase-js
+        run: npm install @supabase/supabase-js @google/generative-ai
 
       - name: Execute Gemini AI Script
         env:
