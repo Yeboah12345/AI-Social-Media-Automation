@@ -42,7 +42,7 @@ export async function POST(req) {
         caption_text: content.caption_text,
         hashtags: content.hashtags,
         media_url: media_url,
-        scheduled_for: new Date(Date.now() + 86400000).toISOString(), // Scheduled for tomorrow
+        scheduled_for: new Date(Date.now() + 86400000).toISOString(),
         status: 'PENDING'
       }]);
 
