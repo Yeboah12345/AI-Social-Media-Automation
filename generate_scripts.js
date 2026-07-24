@@ -4,6 +4,9 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const geminiApiKey = process.env.GEMINI_API_KEY;
 
+// Use environment variable or fall back to standard gemini-1.5-flash
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+
 if (!supabaseUrl || !supabaseKey || !geminiApiKey) {
     console.error("❌ Missing required environment variables!");
     process.exit(1);
@@ -13,9 +16,9 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function runGenerator() {
     const niche = "Artificial Intelligence & Tech News";
+    console.log(`🚀 Using Model: ${GEMINI_MODEL}`);
     console.log(`🚀 Generating 30-day posting plan for niche: "${niche}"...`);
 
-    // Single prompt asking for 30 posts at once to prevent hitting API rate limits
     const prompt = `Generate a JSON array with 30 distinct social media post objects for the niche: "${niche}".
 Return ONLY a raw valid JSON array. Do NOT wrap in markdown syntax or \`\`\`json.
 Each object must have these exact keys:
@@ -25,8 +28,7 @@ Each object must have these exact keys:
 - "caption_text": engaging caption
 - "hashtags": 5 relevant hashtags separated by spaces`;
 
-    // Using gemini-2.5-flash for generous throughput
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${geminiApiKey}`;
 
     try {
         const response = await fetch(url, {
@@ -42,8 +44,13 @@ Each object must have these exact keys:
             process.exit(1);
         }
 
+        if (!data.candidates || !data.candidates[0]?.content?.parts[0]?.text) {
+            console.error("❌ Unexpected response structure:", JSON.stringify(data, null, 2));
+            process.exit(1);
+        }
+
         let rawText = data.candidates[0].content.parts[0].text.trim();
-        // Clean markdown backticks if Gemini adds them
+        // Clean markdown code blocks if present
         rawText = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
 
         const posts = JSON.parse(rawText);
@@ -83,7 +90,7 @@ Each object must have these exact keys:
             };
         });
 
-        // 3. Save all 30 posts to Supabase
+        // 3. Save all 30 posts into Supabase
         const { error: insertErr } = await supabase.from('scheduled_posts').insert(rowsToInsert);
 
         if (insertErr) {
