@@ -4,8 +4,8 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const geminiApiKey = process.env.GEMINI_API_KEY;
 
-// Standard stable Gemini model
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+// gemini-2.5-flash provides maximum speed, high token limits, and minimal API error risks
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
 if (!supabaseUrl || !supabaseKey || !geminiApiKey) {
     console.error("❌ Missing required environment variables!");
@@ -28,8 +28,8 @@ Each object must have these exact keys:
 - "caption_text": engaging caption
 - "hashtags": 5 relevant hashtags separated by spaces`;
 
-    // Updated endpoint to use standard v1 API path
-    const url = `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${geminiApiKey}`;
+    // v1beta is required for direct REST calls using model aliases like gemini-2.5-flash
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${geminiApiKey}`;
 
     try {
         const response = await fetch(url, {
