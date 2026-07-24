@@ -1,4 +1,5 @@
 const { createClient } = require('@supabase/supabase-js');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
@@ -10,62 +11,47 @@ console.log("SUPABASE_KEY present:", !!supabaseKey);
 console.log("GEMINI_API_KEY present:", !!geminiApiKey);
 
 if (!supabaseUrl || !supabaseKey || !geminiApiKey) {
-    console.error("❌ CRITICAL: Missing required environment variables in GitHub Secrets!");
+    console.error("❌ CRITICAL: Missing required secrets in GitHub!");
     process.exit(1);
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
+const genAI = new GoogleGenerativeAI(geminiApiKey);
 
-async function testAndGenerate() {
-    console.log("\n=== STEP 1: TESTING GEMINI API CONNECTION ===");
-    
-    // Primary official Gemini endpoint
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
+async function runGenerator() {
+    const niche = "Artificial Intelligence & Tech News";
+    console.log(`🚀 Generating 30-day posting plan for niche: "${niche}"...`);
 
-    const promptText = `Generate a JSON array with 5 distinct social media post objects for niche "Tech".
-Return strictly valid raw JSON without markdown formatting.
-Each object must have: "day_number", "topic", "script_text", "caption_text", "hashtags".`;
+    // Initialize model via official SDK
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+    const prompt = `Generate a JSON array with 30 distinct social media post objects for the niche: "${niche}".
+Return ONLY a raw valid JSON array. Do NOT wrap in markdown syntax or \`\`\`json.
+Each object must have these exact keys:
+- "day_number": integer from 1 to 30
+- "topic": short catchy title
+- "script_text": 45-second voiceover script with hook, body, and call-to-action
+- "caption_text": engaging caption
+- "hashtags": 5 relevant hashtags separated by spaces`;
 
     try {
-        const response = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: promptText }] }]
-            })
-        });
+        console.log("📡 Sending request to Gemini via official SDK...");
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        let rawText = response.text().trim();
 
-        const responseText = await response.text();
-        console.log(`HTTP Status Code: ${response.status} ${response.statusText}`);
+        // Clean markdown backticks if present
+        rawText = rawText.replace(/^```json/gi, "").replace(/^```/g, "").replace(/```$/g, "").trim();
 
-        if (!response.ok) {
-            console.error("❌ GEMINI API ERROR RESPONSE:");
-            console.error(responseText);
-            process.exit(1);
-        }
+        const posts = JSON.parse(rawText);
+        console.log(`✅ Success! Received ${posts.length} posts from Gemini.`);
 
-        console.log("✅ Gemini API returned success!");
-        const data = JSON.parse(responseText);
-        let rawContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-        if (!rawContent) {
-            console.error("❌ Gemini returned an empty payload:", JSON.stringify(data, null, 2));
-            process.exit(1);
-        }
-
-        // Clean potential markdown blocks
-        rawContent = rawContent.replace(/```json/g, "").replace(/```/g, "").trim();
-        const posts = JSON.parse(rawContent);
-        console.log(`✅ Parsed ${posts.length} generated posts from Gemini.`);
-
-        console.log("\n=== STEP 2: TESTING SUPABASE CONNECTION ===");
-        
-        // Check if user_campaigns table is accessible
+        // 1. Create Campaign Record in Supabase
         const { data: campaign, error: campErr } = await supabase
             .from('user_campaigns')
             .insert([{ 
                 user_id: "00000000-0000-0000-0000-000000000000", 
-                niche: "Tech", 
+                niche: niche, 
                 posts_per_day: 1, 
                 duration_days: posts.length 
             }])
@@ -73,39 +59,44 @@ Each object must have: "day_number", "topic", "script_text", "caption_text", "ha
             .single();
 
         if (campErr) {
-            console.error("❌ SUPABASE CAMPAIGN ERROR:");
-            console.error(JSON.stringify(campErr, null, 2));
+            console.error("❌ Supabase Campaign Error:", JSON.stringify(campErr, null, 2));
             process.exit(1);
         }
 
-        console.log("✅ Successfully created campaign record ID:", campaign.id);
+        console.log("✅ Created campaign record ID:", campaign.id);
 
+        // 2. Prepare database rows spaced 24 hours apart
         const now = new Date();
-        const rowsToInsert = posts.map((post, index) => ({
-            campaign_id: campaign.id,
-            scheduled_for: new Date(now.getTime() + index * 86400000).toISOString(),
-            topic: post.topic,
-            script_text: post.script_text,
-            caption_text: post.caption_text,
-            hashtags: post.hashtags,
-            status: 'PENDING'
-        }));
+        const rowsToInsert = posts.map((post, index) => {
+            const scheduledDate = new Date(now);
+            scheduledDate.setDate(scheduledDate.getDate() + index);
+            scheduledDate.setHours(9, 0, 0, 0);
 
+            return {
+                campaign_id: campaign.id,
+                scheduled_for: scheduledDate.toISOString(),
+                topic: post.topic,
+                script_text: post.script_text,
+                caption_text: post.caption_text,
+                hashtags: post.hashtags,
+                status: 'PENDING'
+            };
+        });
+
+        // 3. Insert posts into Supabase scheduled_posts table
         const { error: insertErr } = await supabase.from('scheduled_posts').insert(rowsToInsert);
 
         if (insertErr) {
-            console.error("❌ SUPABASE POSTS INSERTION ERROR:");
-            console.error(JSON.stringify(insertErr, null, 2));
+            console.error("❌ Supabase Posts Insertion Error:", JSON.stringify(insertErr, null, 2));
             process.exit(1);
         }
 
-        console.log("🎉 ALL STEPS COMPLETED SUCCESSFULLY!");
+        console.log(`🎉 SUCCESS! Saved all ${rowsToInsert.length} posts directly into Supabase!`);
 
     } catch (err) {
-        console.error("❌ UNCAUGHT SCRIPT EXCEPTION:");
-        console.error(err);
+        console.error("❌ UNCAUGHT EXCEPTION:", err);
         process.exit(1);
     }
 }
 
-testAndGenerate();
+runGenerator();
