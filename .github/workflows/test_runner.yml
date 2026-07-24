@@ -1,4 +1,4 @@
-name: Test Gemini AI Script Generator
+name: Test AI Script Generator (Groq Engine)
 
 on:
   workflow_dispatch:
@@ -16,11 +16,11 @@ jobs:
           node-version: '22'
 
       - name: Install Dependencies
-        run: npm install @supabase/supabase-js @google/generative-ai
+        run: npm install @supabase/supabase-js groq-sdk
 
-      - name: Execute Gemini AI Script
+      - name: Execute Groq AI Script
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: node generate_scripts.js
