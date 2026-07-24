@@ -4,9 +4,6 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const geminiApiKey = process.env.GEMINI_API_KEY;
 
-// gemini-2.5-flash provides maximum speed, high token limits, and minimal API error risks
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-
 if (!supabaseUrl || !supabaseKey || !geminiApiKey) {
     console.error("❌ Missing required environment variables!");
     process.exit(1);
@@ -14,9 +11,51 @@ if (!supabaseUrl || !supabaseKey || !geminiApiKey) {
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// Fallback matrix: tries models across API versions automatically
+const CANDIDATE_TARGETS = [
+    { model: "gemini-2.5-flash", version: "v1beta" },
+    { model: "gemini-2.0-flash", version: "v1beta" },
+    { model: "gemini-1.5-flash", version: "v1beta" },
+    { model: "gemini-2.0-flash", version: "v1" },
+    { model: "gemini-1.5-flash", version: "v1" }
+];
+
+async function callGeminiWithFallback(promptText) {
+    let lastError = null;
+
+    for (const target of CANDIDATE_TARGETS) {
+        const url = `https://generativelanguage.googleapis.com/${target.version}/models/${target.model}:generateContent?key=${geminiApiKey}`;
+        console.log(`📡 Trying endpoint: ${target.version} \vert{} model:${target.model}...`);
+
+        try {
+            const response = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: promptText }] }]
+                })
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.candidates && data.candidates[0]?.content?.parts[0]?.text) {
+                console.log(`✅ Connection succeeded using model: ${target.model} (${target.version})`);
+                return data.candidates[0].content.parts[0].text;
+            }
+
+            console.warn(`⚠️ Attempt failed for ${target.model} (${target.version}):${data?.error?.message || response.statusText}`);
+            lastError = data;
+        } catch (err) {
+            console.warn(`⚠️ Network error on ${target.model}:`, err.message);
+            lastError = err;
+        }
+    }
+
+    throw new Error(`All Gemini API endpoints failed. Last response: ${JSON.stringify(lastError)}`);
+}
+
 async function runGenerator() {
     const niche = "Artificial Intelligence & Tech News";
-    console.log(`🚀 Using Model: ${GEMINI_MODEL}`);
     console.log(`🚀 Generating 30-day posting plan for niche: "${niche}"...`);
 
     const prompt = `Generate a JSON array with 30 distinct social media post objects for the niche: "${niche}".
@@ -28,33 +67,14 @@ Each object must have these exact keys:
 - "caption_text": engaging caption
 - "hashtags": 5 relevant hashtags separated by spaces`;
 
-    // v1beta is required for direct REST calls using model aliases like gemini-2.5-flash
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${geminiApiKey}`;
-
     try {
-        const response = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            console.error("❌ Google API Error:", JSON.stringify(data, null, 2));
-            process.exit(1);
-        }
-
-        if (!data.candidates || !data.candidates[0]?.content?.parts[0]?.text) {
-            console.error("❌ Unexpected response structure:", JSON.stringify(data, null, 2));
-            process.exit(1);
-        }
-
-        let rawText = data.candidates[0].content.parts[0].text.trim();
-        rawText = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
+        let rawText = await callGeminiWithFallback(prompt);
+        
+        // Clean markdown backticks if returned
+        rawText = rawText.trim().replace(/^```json/gi, "").replace(/^```/g, "").replace(/```$/g, "").trim();
 
         const posts = JSON.parse(rawText);
-        console.log(`✅ Success! Generated ${posts.length} posts from Gemini in 1 request.`);
+        console.log(`✅ Success! Received ${posts.length} generated posts.`);
 
         // 1. Create Campaign Record in Supabase
         const { data: campaign, error: campErr } = await supabase
@@ -90,7 +110,7 @@ Each object must have these exact keys:
             };
         });
 
-        // 3. Save all 30 posts into Supabase
+        // 3. Save all posts into Supabase
         const { error: insertErr } = await supabase.from('scheduled_posts').insert(rowsToInsert);
 
         if (insertErr) {
@@ -98,10 +118,10 @@ Each object must have these exact keys:
             process.exit(1);
         }
 
-        console.log(`🎉 SUCCESS! Saved all ${rowsToInsert.length} posts directly into your Supabase database!`);
+        console.log(`🎉 SUCCESS! Saved all ${rowsToInsert.length} posts directly into Supabase!`);
 
     } catch (err) {
-        console.error("❌ UNCAUGHT ERROR:", err);
+        console.error("❌ SCRIPT FAILED:", err.message || err);
         process.exit(1);
     }
 }
