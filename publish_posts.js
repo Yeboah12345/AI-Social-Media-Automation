@@ -1,7 +1,7 @@
 const { createClient } = require('@supabase/supabase-js');
 
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_KEY; // Must be service_role key
+const supabaseKey = process.env.SUPABASE_KEY;
 const socialApiKey = process.env.SOCIAL_API_KEY;
 
 if (!supabaseUrl || !supabaseKey || !socialApiKey) {
@@ -12,11 +12,11 @@ if (!supabaseUrl || !supabaseKey || !socialApiKey) {
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function publishDuePosts() {
-    console.log("🔍 Checking Supabase for due posts...");
+    console.log("🔍 Running Production Social Media Dispatcher...");
 
     const now = new Date().toISOString();
 
-    // 1. Fetch pending posts scheduled for now or earlier
+    // 1. Retrieve all PENDING posts scheduled on or before current time
     const { data: posts, error: fetchErr } = await supabase
         .from('scheduled_posts')
         .select('*')
@@ -29,37 +29,42 @@ async function publishDuePosts() {
     }
 
     if (!posts || posts.length === 0) {
-        console.log("⚡ No pending posts due for publication right now.");
+        console.log("⚡ No pending posts due for publication at this time.");
         return;
     }
 
-    console.log(`📦 Found ${posts.length} post(s) ready to publish.`);
+    console.log(`📦 Found ${posts.length} pending post(s) ready for instant distribution.`);
 
     for (const post of posts) {
-        console.log(`\n🚀 Publishing Post ID [${post.id}]: "${post.topic}"...`);
+        console.log(`\n🚀 Dispatching Post ID [${post.id}]: "${post.topic}"...`);
 
-        const postCaption = `${post.caption_text}\n\n${post.hashtags}`;
+        const fullPostText = `${post.caption_text}\n\n${post.hashtags}`;
+
+        const payload = {
+            text: fullPostText,
+            platforms: ["linkedin", "twitter", "instagram", "tiktok"]
+        };
+
+        // Attach image media URL if present
+        if (post.media_url) {
+            payload.media_url = post.media_url;
+        }
 
         try {
-            // 2. Send to Upload-Post API
             const response = await fetch('https://v1.upload-post.com/api/upload', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${socialApiKey}`
                 },
-                body: JSON.stringify({
-                    text: postCaption,
-                    platforms: ["linkedin", "twitter", "instagram", "tiktok"] // Adjust based on your connected platforms
-                })
+                body: JSON.stringify(payload)
             });
 
             const result = await response.json();
 
             if (response.ok) {
-                console.log(`✅ Successfully published Post ID [${post.id}]!`);
+                console.log(`✅ Successfully published Post ID [${post.id}] to connected social channels!`);
 
-                // 3. Mark as PUBLISHED in Supabase
                 await supabase
                     .from('scheduled_posts')
                     .update({ 
@@ -68,7 +73,7 @@ async function publishDuePosts() {
                     })
                     .eq('id', post.id);
             } else {
-                console.error(`❌ API Dispatch Failed for Post ID [${post.id}]:`, result);
+                console.error(`❌ Dispatch Failed for Post ID [${post.id}]:`, result);
 
                 await supabase
                     .from('scheduled_posts')
@@ -77,7 +82,7 @@ async function publishDuePosts() {
             }
 
         } catch (err) {
-            console.error(`❌ Exception while publishing Post ID [${post.id}]:`, err);
+            console.error(`❌ Exception during publication of Post ID [${post.id}]:`, err);
 
             await supabase
                 .from('scheduled_posts')
