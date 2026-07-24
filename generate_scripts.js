@@ -1,29 +1,26 @@
 const { createClient } = require('@supabase/supabase-js');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Groq = require('groq-sdk');
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
-const geminiApiKey = process.env.GEMINI_API_KEY;
+const groqApiKey = process.env.GROQ_API_KEY;
 
 console.log("=== ENVIRONMENT CHECK ===");
 console.log("SUPABASE_URL present:", !!supabaseUrl);
 console.log("SUPABASE_KEY present:", !!supabaseKey);
-console.log("GEMINI_API_KEY present:", !!geminiApiKey);
+console.log("GROQ_API_KEY present:", !!groqApiKey);
 
-if (!supabaseUrl || !supabaseKey || !geminiApiKey) {
+if (!supabaseUrl || !supabaseKey || !groqApiKey) {
     console.error("❌ CRITICAL: Missing required secrets in GitHub!");
     process.exit(1);
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
-const genAI = new GoogleGenerativeAI(geminiApiKey);
+const groq = new Groq({ apiKey: groqApiKey });
 
 async function runGenerator() {
     const niche = "Artificial Intelligence & Tech News";
-    console.log(`🚀 Generating 30-day posting plan for niche: "${niche}"...`);
-
-    // Initialize model via official SDK
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    console.log(`🚀 Generating 30-day posting plan with Groq (Llama 3.3 70B) for niche: "${niche}"...`);
 
     const prompt = `Generate a JSON array with 30 distinct social media post objects for the niche: "${niche}".
 Return ONLY a raw valid JSON array. Do NOT wrap in markdown syntax or \`\`\`json.
@@ -35,16 +32,29 @@ Each object must have these exact keys:
 - "hashtags": 5 relevant hashtags separated by spaces`;
 
     try {
-        console.log("📡 Sending request to Gemini via official SDK...");
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        let rawText = response.text().trim();
+        console.log("📡 Requesting script generation from Groq...");
+        
+        const chatCompletion = await groq.chat.completions.create({
+            messages: [
+                { role: "system", content: "You are a JSON-only API response engine. Always return valid raw JSON arrays." },
+                { role: "user", content: prompt }
+            ],
+            model: "llama-3.3-70b-versatile",
+            temperature: 0.7,
+            response_format: { type: "json_object" }
+        });
 
-        // Clean markdown backticks if present
-        rawText = rawText.replace(/^```json/gi, "").replace(/^```/g, "").replace(/```$/g, "").trim();
+        let rawText = chatCompletion.choices[0]?.message?.content?.trim();
 
-        const posts = JSON.parse(rawText);
-        console.log(`✅ Success! Received ${posts.length} posts from Gemini.`);
+        // Unwrap JSON if nested under a top-level key like {"posts": [...]} or raw array
+        let parsed = JSON.parse(rawText);
+        let posts = Array.isArray(parsed) ? parsed : (parsed.posts || parsed.data || Object.values(parsed)[0]);
+
+        if (!Array.isArray(posts)) {
+            throw new Error("Parsed JSON response was not an array of posts.");
+        }
+
+        console.log(`✅ Success! Received ${posts.length} posts from Groq AI.`);
 
         // 1. Create Campaign Record in Supabase
         const { data: campaign, error: campErr } = await supabase
@@ -83,7 +93,7 @@ Each object must have these exact keys:
             };
         });
 
-        // 3. Insert posts into Supabase scheduled_posts table
+        // 3. Save all posts to Supabase
         const { error: insertErr } = await supabase.from('scheduled_posts').insert(rowsToInsert);
 
         if (insertErr) {
