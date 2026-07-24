@@ -4,7 +4,7 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const geminiApiKey = process.env.GEMINI_API_KEY;
 
-// Use environment variable or fall back to standard gemini-1.5-flash
+// Standard stable Gemini model
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 
 if (!supabaseUrl || !supabaseKey || !geminiApiKey) {
@@ -28,7 +28,8 @@ Each object must have these exact keys:
 - "caption_text": engaging caption
 - "hashtags": 5 relevant hashtags separated by spaces`;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${geminiApiKey}`;
+    // Updated endpoint to use standard v1 API path
+    const url = `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${geminiApiKey}`;
 
     try {
         const response = await fetch(url, {
@@ -50,7 +51,6 @@ Each object must have these exact keys:
         }
 
         let rawText = data.candidates[0].content.parts[0].text.trim();
-        // Clean markdown code blocks if present
         rawText = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
 
         const posts = JSON.parse(rawText);
