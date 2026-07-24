@@ -12,14 +12,11 @@ export default function SocialDashboard() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('ALL');
   const [publishingId, setPublishingId] = useState(null);
-
-  const platforms = [
-    { name: 'Instagram', color: 'bg-gradient-to-r from-purple-500 to-pink-500' },
-    { name: 'TikTok', color: 'bg-black text-white border border-gray-700' },
-    { name: 'YouTube', color: 'bg-red-600 text-white' },
-    { name: 'LinkedIn', color: 'bg-blue-600 text-white' },
-    { name: 'X / Twitter', color: 'bg-gray-900 text-white' },
-  ];
+  
+  // Campaign Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [topic, setTopic] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
     fetchPosts();
@@ -40,6 +37,36 @@ export default function SocialDashboard() {
     setLoading(false);
   }
 
+  // Create Campaign Action
+  async function handleCreateCampaign(e) {
+    e.preventDefault();
+    if (!topic.trim()) return;
+
+    setIsGenerating(true);
+    try {
+      // Calls your campaign creation API endpoint
+      const res = await fetch('/api/create-campaign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic }),
+      });
+
+      if (res.ok) {
+        alert('Campaign created successfully!');
+        setTopic('');
+        setIsModalOpen(false);
+        fetchPosts(); // Reload post list
+      } else {
+        alert('Failed to generate campaign. Check API keys.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error creating campaign.');
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
   async function triggerImmediatePublish(postId) {
     setPublishingId(postId);
     try {
@@ -52,7 +79,7 @@ export default function SocialDashboard() {
       if (response.ok) {
         setPosts(prev => prev.map(p => p.id === postId ? { ...p, status: 'PUBLISHED' } : p));
       } else {
-        alert('Publishing failed. Check server log.');
+        alert('Publishing failed.');
       }
     } catch (err) {
       console.error(err);
@@ -66,6 +93,8 @@ export default function SocialDashboard() {
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#020617', color: '#f8fafc', padding: '2rem', fontFamily: 'sans-serif' }}>
+      
+      {/* HEADER SECTION */}
       <header style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1e293b', paddingBottom: '1.5rem' }}>
         <div>
           <h1 style={{ fontSize: '1.875rem', fontWeight: '800', margin: 0, color: '#38bdf8' }}>
@@ -76,7 +105,15 @@ export default function SocialDashboard() {
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: '1rem' }}>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          {/* CREATE CAMPAIGN BUTTON */}
+          <button
+            onClick={() => setIsModalOpen(true)}
+            style={{ backgroundColor: '#2563eb', color: 'white', padding: '0.6rem 1.2rem', borderRadius: '0.5rem', fontWeight: 'bold', border: 'none', cursor: 'pointer' }}
+          >
+            ✨ Create Campaign
+          </button>
+
           <div style={{ backgroundColor: '#0f172a', padding: '0.5rem 1rem', borderRadius: '0.5rem', textAlign: 'center', border: '1px solid #1e293b' }}>
             <span style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>TOTAL</span>
             <strong style={{ fontSize: '1.25rem', color: '#38bdf8' }}>{posts.length}</strong>
@@ -85,13 +122,10 @@ export default function SocialDashboard() {
             <span style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>PENDING</span>
             <strong style={{ fontSize: '1.25rem', color: '#fbbf24' }}>{posts.filter(p => p.status === 'PENDING').length}</strong>
           </div>
-          <div style={{ backgroundColor: '#0f172a', padding: '0.5rem 1rem', borderRadius: '0.5rem', textAlign: 'center', border: '1px solid #1e293b' }}>
-            <span style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>PUBLISHED</span>
-            <strong style={{ fontSize: '1.25rem', color: '#34d399' }}>{posts.filter(p => p.status === 'PUBLISHED').length}</strong>
-          </div>
         </div>
       </header>
 
+      {/* MAIN CONTENT */}
       <main style={{ maxWidth: '1200px', margin: '2rem auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -126,7 +160,7 @@ export default function SocialDashboard() {
           <div style={{ textAlign: 'center', padding: '4rem', color: '#64748b' }}>Loading scheduled posts...</div>
         ) : filteredPosts.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '4rem', backgroundColor: '#0f172a', borderRadius: '0.75rem', color: '#64748b' }}>
-            No posts found in this view.
+            No posts found in this view. Click "✨ Create Campaign" to generate one!
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}>
@@ -163,6 +197,44 @@ export default function SocialDashboard() {
           </div>
         )}
       </main>
+
+      {/* CREATE CAMPAIGN MODAL POPUP */}
+      {isModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100 }}>
+          <div style={{ backgroundColor: '#0f172a', border: '1px solid #334155', padding: '2rem', borderRadius: '0.75rem', width: '100%', maxWidth: '480px' }}>
+            <h2 style={{ margin: '0 0 1rem 0', color: '#38bdf8' }}>Create New Campaign</h2>
+            <form onSubmit={handleCreateCampaign}>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#94a3b8', marginBottom: '0.5rem' }}>
+                Campaign Niche / Topic:
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. AI Technology Trends, Fitness Tips..."
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                required
+                style={{ width: '100%', padding: '0.75rem', borderRadius: '0.375rem', border: '1px solid #334155', backgroundColor: '#020617', color: 'white', marginBottom: '1.5rem', boxSizing: 'border-box' }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  style={{ padding: '0.5rem 1rem', borderRadius: '0.375rem', border: 'none', backgroundColor: '#334155', color: 'white', cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isGenerating}
+                  style={{ padding: '0.5rem 1rem', borderRadius: '0.375rem', border: 'none', backgroundColor: '#2563eb', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}
+                >
+                  {isGenerating ? 'Generating...' : 'Start Generation'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
