@@ -5,13 +5,8 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const groqApiKey = process.env.GROQ_API_KEY;
 
-console.log("=== ENVIRONMENT CHECK ===");
-console.log("SUPABASE_URL present:", !!supabaseUrl);
-console.log("SUPABASE_KEY present:", !!supabaseKey);
-console.log("GROQ_API_KEY present:", !!groqApiKey);
-
 if (!supabaseUrl || !supabaseKey || !groqApiKey) {
-    console.error("❌ CRITICAL: Missing required secrets in GitHub!");
+    console.error("❌ CRITICAL: Missing required environment variables!");
     process.exit(1);
 }
 
@@ -20,19 +15,20 @@ const groq = new Groq({ apiKey: groqApiKey });
 
 async function runGenerator() {
     const niche = "Artificial Intelligence & Tech News";
-    console.log(`🚀 Generating 30-day posting plan with Groq (Llama 3.3 70B) for niche: "${niche}"...`);
+    console.log(`🚀 Starting Full Production Generator for Niche: "${niche}"...`);
 
     const prompt = `Generate a JSON array with 30 distinct social media post objects for the niche: "${niche}".
-Return ONLY a raw valid JSON array. Do NOT wrap in markdown syntax or \`\`\`json.
+Return ONLY a raw valid JSON array. Do NOT wrap in markdown syntax.
 Each object must have these exact keys:
 - "day_number": integer from 1 to 30
 - "topic": short catchy title
 - "script_text": 45-second voiceover script with hook, body, and call-to-action
 - "caption_text": engaging caption
-- "hashtags": 5 relevant hashtags separated by spaces`;
+- "hashtags": 5 relevant hashtags separated by spaces
+- "image_prompt": concise descriptive prompt for a futuristic visual relevant to topic`;
 
     try {
-        console.log("📡 Requesting script generation from Groq...");
+        console.log("📡 Requesting content generation from Groq...");
         
         const chatCompletion = await groq.chat.completions.create({
             messages: [
@@ -45,8 +41,6 @@ Each object must have these exact keys:
         });
 
         let rawText = chatCompletion.choices[0]?.message?.content?.trim();
-
-        // Unwrap JSON if nested under a top-level key like {"posts": [...]} or raw array
         let parsed = JSON.parse(rawText);
         let posts = Array.isArray(parsed) ? parsed : (parsed.posts || parsed.data || Object.values(parsed)[0]);
 
@@ -69,18 +63,20 @@ Each object must have these exact keys:
             .single();
 
         if (campErr) {
-            console.error("❌ Supabase Campaign Error:", JSON.stringify(campErr, null, 2));
+            console.error("❌ Supabase Campaign Creation Error:", campErr);
             process.exit(1);
         }
 
-        console.log("✅ Created campaign record ID:", campaign.id);
-
-        // 2. Prepare database rows spaced 24 hours apart
+        // 2. Prepare database rows with auto-generated dynamic image URLs
         const now = new Date();
         const rowsToInsert = posts.map((post, index) => {
             const scheduledDate = new Date(now);
             scheduledDate.setDate(scheduledDate.getDate() + index);
             scheduledDate.setHours(9, 0, 0, 0);
+
+            // Generate direct HD Flux AI image URL based on prompt
+            const cleanImagePrompt = encodeURIComponent(post.image_prompt || post.topic);
+            const generatedImageUrl = `https://pollinations.ai/p/${cleanImagePrompt}?width=1080&height=1080&seed=${index + 100}&model=flux`;
 
             return {
                 campaign_id: campaign.id,
@@ -89,22 +85,23 @@ Each object must have these exact keys:
                 script_text: post.script_text,
                 caption_text: post.caption_text,
                 hashtags: post.hashtags,
+                media_url: generatedImageUrl,
                 status: 'PENDING'
             };
         });
 
-        // 3. Save all posts to Supabase
+        // 3. Save all 30 posts to Supabase
         const { error: insertErr } = await supabase.from('scheduled_posts').insert(rowsToInsert);
 
         if (insertErr) {
-            console.error("❌ Supabase Posts Insertion Error:", JSON.stringify(insertErr, null, 2));
+            console.error("❌ Supabase Insertion Error:", insertErr);
             process.exit(1);
         }
 
-        console.log(`🎉 SUCCESS! Saved all ${rowsToInsert.length} posts directly into Supabase!`);
+        console.log(`🎉 PRODUCTION SUCCESS! Generated and stored ${rowsToInsert.length} posts with custom AI visuals into Supabase!`);
 
     } catch (err) {
-        console.error("❌ UNCAUGHT EXCEPTION:", err);
+        console.error("❌ SCRIPT EXECUTION FAILED:", err.message || err);
         process.exit(1);
     }
 }
