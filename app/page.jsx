@@ -5,7 +5,13 @@ import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
+let supabase = null;
+if (supabaseUrl && supabaseKey) {
+  supabase = createClient(supabaseUrl, supabaseKey);
+} else {
+  // defensive: do not throw at import time if env is missing
+  console.warn('NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY is not set. Supabase queries will be skipped.');
+}
 
 export default function SocialDashboard() {
   const [posts, setPosts] = useState([]);
@@ -23,21 +29,37 @@ export default function SocialDashboard() {
 
   useEffect(() => {
     fetchPosts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function fetchPosts() {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('scheduled_posts')
-      .select('*')
-      .order('scheduled_for', { ascending: true });
 
-    if (error) {
-      console.error('Error loading posts:', error);
-    } else {
-      setPosts(data || []);
+    if (!supabase) {
+      console.warn('Skipping fetchPosts: Supabase client not configured.');
+      setPosts([]);
+      setLoading(false);
+      return;
     }
-    setLoading(false);
+
+    try {
+      const { data, error } = await supabase
+        .from('scheduled_posts')
+        .select('*')
+        .order('scheduled_for', { ascending: true });
+
+      if (error) {
+        console.error('Error loading posts:', error);
+        setPosts([]);
+      } else {
+        setPosts(data || []);
+      }
+    } catch (err) {
+      console.error('Unexpected error loading posts:', err);
+      setPosts([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function triggerImmediatePublish(postId) {
@@ -52,6 +74,7 @@ export default function SocialDashboard() {
       if (response.ok) {
         setPosts(prev => prev.map(p => p.id === postId ? { ...p, status: 'PUBLISHED' } : p));
       } else {
+        console.error('Publishing failed, server returned non-OK status');
         alert('Publishing failed. Check server log.');
       }
     } catch (err) {
@@ -145,7 +168,7 @@ export default function SocialDashboard() {
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '1rem', borderTop: '1px solid #1e293b' }}>
                     <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                      {new Date(post.scheduled_for).toLocaleDateString()}
+                      {post.scheduled_for ? new Date(post.scheduled_for).toLocaleDateString() : '—'}
                     </span>
                     {post.status === 'PENDING' && (
                       <button
