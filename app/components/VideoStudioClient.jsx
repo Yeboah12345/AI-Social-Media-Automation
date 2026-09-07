@@ -3,27 +3,17 @@
 import React, { useRef, useEffect, useState } from 'react';
 
 const TEMPLATES = [
-  {
-    id: 'ocean',
-    name: 'Ocean Glow',
-    colors: ['#0ea5e9', '#7c3aed'],
-    textColor: '#f8fafc'
-  },
-  {
-    id: 'sunset',
-    name: 'Sunset',
-    colors: ['#fb923c', '#ef4444'],
-    textColor: '#0f172a'
-  },
-  {
-    id: 'neon',
-    name: 'Neon',
-    colors: ['#06b6d4', '#f472b6'],
-    textColor: '#020617'
-  }
+  { id: 'ocean', name: 'Ocean Glow', colors: ['#0ea5e9', '#7c3aed'], textColor: '#f8fafc' },
+  { id: 'sunset', name: 'Sunset', colors: ['#fb923c', '#ef4444'], textColor: '#0f172a' },
+  { id: 'neon', name: 'Neon', colors: ['#06b6d4', '#f472b6'], textColor: '#020617' }
 ];
 
-export default function VideoStudioClient({ width = 1080, height = 1080, fps = 30, onRecordingComplete = () => {} }) {
+export default function VideoStudioClient({
+  width = 1080,
+  height = 1080,
+  fps = 30,
+  onRecordingComplete = () => {}
+}) {
   const canvasRef = useRef(null);
   const rafRef = useRef(null);
   const startTimeRef = useRef(null);
@@ -34,7 +24,7 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const [previewUrl, setPreviewUrl] = useState(null);
-  const [duration, setDuration] = useState(15); // seconds, default 15
+  const [duration, setDuration] = useState(15); // seconds default
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -48,7 +38,6 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
       if (!startTimeRef.current) startTimeRef.current = timestamp;
       const t = (timestamp - startTimeRef.current) / 1000; // seconds
 
-      // Background gradient
       const template = TEMPLATES.find((tpl) => tpl.id === templateId) || TEMPLATES[0];
       const g = ctx.createLinearGradient(0, 0, width, height);
       g.addColorStop(0, template.colors[0]);
@@ -56,7 +45,6 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, width, height);
 
-      // Animated accent (moving circle)
       const cx = width * 0.5 + Math.sin(t * 1.2) * (width * 0.12);
       const cy = height * 0.25 + Math.cos(t * 0.8) * (height * 0.05);
       ctx.beginPath();
@@ -66,7 +54,6 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
       ctx.fill();
       ctx.globalAlpha = 1;
 
-      // Draw wrapped text
       ctx.fillStyle = template.textColor;
       const padding = 80;
       const maxWidth = width - padding * 2;
@@ -76,7 +63,6 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
 
       wrapText(ctx, text, width / 2, height * 0.55, maxWidth, fontSize * 1.05);
 
-      // Footer small caption
       ctx.font = `400 ${Math.floor(width / 28)}px Inter, system-ui`;
       ctx.fillStyle = template.textColor;
       ctx.fillText('Automated clip • AI Social Studio', width / 2, height - 60);
@@ -92,7 +78,6 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
     };
   }, [templateId, text, width, height]);
 
-  // Text wrapping helper
   function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
     const words = String(text).split(' ');
     const lines = [];
@@ -111,7 +96,6 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
     }
     lines.push(line);
 
-    // vertical center the block
     const totalHeight = lines.length * lineHeight;
     let startY = y - totalHeight / 2 + lineHeight / 2;
     for (let i = 0; i < lines.length; i++) {
@@ -128,9 +112,9 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
     recordedChunksRef.current = [];
 
     try {
-      const options = { mimeType: 'video/webm;codecs=vp9', videoBitsPerSecond: 2500000 };
+      let options = { mimeType: 'video/webm;codecs=vp9', videoBitsPerSecond: 2500000 };
       if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) {
-        options.mimeType = 'video/webm';
+        options = { mimeType: 'video/webm', videoBitsPerSecond: 2500000 };
       } else if (!MediaRecorder.isTypeSupported(options.mimeType)) {
         options.mimeType = 'video/webm;codecs=vp8';
       }
@@ -141,14 +125,12 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
       mr.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) {
           recordedChunksRef.current.push(e.data);
-          // Keep memory bounded by occasionally revoking previous blobs if preview exists
         }
       };
 
       mr.onstop = () => {
         const blob = new Blob(recordedChunksRef.current, { type: recordedChunksRef.current[0]?.type || 'video/webm' });
         const url = URL.createObjectURL(blob);
-        // Revoke previous preview if any
         if (previewUrl) URL.revokeObjectURL(previewUrl);
         setPreviewUrl(url);
         onRecordingComplete(blob);
@@ -156,19 +138,17 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
         clearInterval(progressIntervalRef.current);
       };
 
-      // Start recording with 10s timeslice to emit dataavailable every 10s
+      // chunk every 10s
       mr.start(10000);
       setIsRecording(true);
       startTimeRef.current = performance.now();
       setElapsed(0);
 
-      // Progress timer updates every 500ms
       progressIntervalRef.current = setInterval(() => {
         const now = performance.now();
         const secs = Math.floor((now - startTimeRef.current) / 1000);
         setElapsed(secs);
         if (secs >= duration) {
-          // auto-stop when duration reached
           if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop();
           setIsRecording(false);
           clearInterval(progressIntervalRef.current);
