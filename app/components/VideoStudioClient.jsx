@@ -27,12 +27,15 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
   const canvasRef = useRef(null);
   const rafRef = useRef(null);
   const startTimeRef = useRef(null);
+  const progressIntervalRef = useRef(null);
   const [templateId, setTemplateId] = useState(TEMPLATES[0].id);
   const [text, setText] = useState('Your headline goes here');
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [duration, setDuration] = useState(15); // seconds, default 15
+  const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -125,9 +128,9 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
     recordedChunksRef.current = [];
 
     try {
-      let options = { mimeType: 'video/webm;codecs=vp9' };
+      const options = { mimeType: 'video/webm;codecs=vp9', videoBitsPerSecond: 2500000 };
       if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) {
-        options = { mimeType: 'video/webm' };
+        options.mimeType = 'video/webm';
       } else if (!MediaRecorder.isTypeSupported(options.mimeType)) {
         options.mimeType = 'video/webm;codecs=vp8';
       }
@@ -136,18 +139,41 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
       mediaRecorderRef.current = mr;
 
       mr.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) recordedChunksRef.current.push(e.data);
+        if (e.data && e.data.size > 0) {
+          recordedChunksRef.current.push(e.data);
+          // Keep memory bounded by occasionally revoking previous blobs if preview exists
+        }
       };
 
       mr.onstop = () => {
         const blob = new Blob(recordedChunksRef.current, { type: recordedChunksRef.current[0]?.type || 'video/webm' });
         const url = URL.createObjectURL(blob);
+        // Revoke previous preview if any
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
         setPreviewUrl(url);
         onRecordingComplete(blob);
+        setElapsed(0);
+        clearInterval(progressIntervalRef.current);
       };
 
-      mr.start();
+      // Start recording with 10s timeslice to emit dataavailable every 10s
+      mr.start(10000);
       setIsRecording(true);
+      startTimeRef.current = performance.now();
+      setElapsed(0);
+
+      // Progress timer updates every 500ms
+      progressIntervalRef.current = setInterval(() => {
+        const now = performance.now();
+        const secs = Math.floor((now - startTimeRef.current) / 1000);
+        setElapsed(secs);
+        if (secs >= duration) {
+          // auto-stop when duration reached
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop();
+          setIsRecording(false);
+          clearInterval(progressIntervalRef.current);
+        }
+      }, 500);
     } catch (err) {
       console.error('Failed to start MediaRecorder:', err);
       alert('Recording not supported in this browser.');
@@ -160,6 +186,8 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
       mediaRecorderRef.current.stop();
     }
     setIsRecording(false);
+    clearInterval(progressIntervalRef.current);
+    setElapsed(0);
   }
 
   function downloadRecording() {
@@ -172,11 +200,23 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
     a.remove();
   }
 
+  const progressPercent = Math.min(100, Math.round((elapsed / Math.max(1, duration)) * 100));
+
   return (
     <div className="w-full max-w-4xl mx-auto bg-slate-900 rounded-xl p-6 shadow-lg">
       <div className="flex flex-col md:flex-row gap-4">
         <div className="flex-1 flex flex-col items-center">
           <canvas ref={canvasRef} className="w-full max-w-[480px] bg-black rounded-md shadow-inner" style={{ aspectRatio: '1 / 1' }} />
+
+          <div className="mt-4 w-full max-w-[480px]">
+            <div className="w-full h-2 bg-slate-800 rounded overflow-hidden">
+              <div className="h-2 bg-emerald-500" style={{ width: `${progressPercent}%` }} />
+            </div>
+            <div className="flex items-center justify-between mt-2 text-xs text-slate-300">
+              <div>{new Date(elapsed * 1000).toISOString().substr(11, 8)}</div>
+              <div>{new Date(duration * 1000).toISOString().substr(11, 8)}</div>
+            </div>
+          </div>
 
           <div className="mt-4 flex gap-2">
             <button
@@ -225,6 +265,19 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
                 className="mt-2 w-full rounded-md bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"
                 placeholder="Enter headline text"
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-300">Duration (seconds)</label>
+              <input
+                type="range"
+                min={1}
+                max={600}
+                value={duration}
+                onChange={(e) => setDuration(Number(e.target.value))}
+                className="w-full mt-2"
+              />
+              <div className="text-sm text-slate-400 mt-1">{duration} seconds</div>
             </div>
 
             <div>
