@@ -1,16 +1,17 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import VideoStudioClient from './components/VideoStudioClient';
 
+// Defensive Supabase init (only create client if public envs present)
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 let supabase = null;
-if (supabaseUrl && supabaseKey) {
-  supabase = createClient(supabaseUrl, supabaseKey);
+if (supabaseUrl && supabaseAnonKey) {
+  supabase = createClient(supabaseUrl, supabaseAnonKey);
 } else {
-  // defensive: do not throw at import time if env is missing
-  console.warn('NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY is not set. Supabase queries will be skipped.');
+  console.warn('NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY missing — Supabase disabled on client.');
 }
 
 export default function SocialDashboard() {
@@ -19,13 +20,21 @@ export default function SocialDashboard() {
   const [filter, setFilter] = useState('ALL');
   const [publishingId, setPublishingId] = useState(null);
 
-  const platforms = [
-    { name: 'Instagram', color: 'bg-gradient-to-r from-purple-500 to-pink-500' },
-    { name: 'TikTok', color: 'bg-black text-white border border-gray-700' },
-    { name: 'YouTube', color: 'bg-red-600 text-white' },
-    { name: 'LinkedIn', color: 'bg-blue-600 text-white' },
-    { name: 'X / Twitter', color: 'bg-gray-900 text-white' },
-  ];
+  // Schedule modal state
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [pendingBlob, setPendingBlob] = useState(null);
+  const [platformsSelected, setPlatformsSelected] = useState([]);
+  const [scheduledAt, setScheduledAt] = useState(() => {
+    const d = new Date();
+    d.setHours(d.getHours() + 1);
+    return d.toISOString().slice(0, 16); // yyyy-mm-ddThh:mm
+  });
+  const [topic, setTopic] = useState('');
+  const [caption, setCaption] = useState('');
+  const [hashtags, setHashtags] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const AVAILABLE_PLATFORMS = ['YouTube', 'TikTok', 'Instagram', 'X'];
 
   useEffect(() => {
     fetchPosts();
@@ -34,20 +43,14 @@ export default function SocialDashboard() {
 
   async function fetchPosts() {
     setLoading(true);
-
     if (!supabase) {
-      console.warn('Skipping fetchPosts: Supabase client not configured.');
       setPosts([]);
       setLoading(false);
       return;
     }
 
     try {
-      const { data, error } = await supabase
-        .from('scheduled_posts')
-        .select('*')
-        .order('scheduled_for', { ascending: true });
-
+      const { data, error } = await supabase.from('scheduled_posts').select('*').order('scheduled_for', { ascending: true });
       if (error) {
         console.error('Error loading posts:', error);
         setPosts([]);
@@ -55,7 +58,7 @@ export default function SocialDashboard() {
         setPosts(data || []);
       }
     } catch (err) {
-      console.error('Unexpected error loading posts:', err);
+      console.error('Unexpected fetchPosts error:', err);
       setPosts([]);
     } finally {
       setLoading(false);
@@ -65,127 +68,251 @@ export default function SocialDashboard() {
   async function triggerImmediatePublish(postId) {
     setPublishingId(postId);
     try {
-      const response = await fetch('/api/publish-now', {
+      const res = await fetch('/api/publish-now', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ postId })
       });
 
-      if (response.ok) {
+      if (res.ok) {
         setPosts(prev => prev.map(p => p.id === postId ? { ...p, status: 'PUBLISHED' } : p));
       } else {
-        console.error('Publishing failed, server returned non-OK status');
-        alert('Publishing failed. Check server log.');
+        const body = await res.json().catch(() => null);
+        console.error('Publish-now failed', res.status, body);
+        alert('Publishing failed. Check server logs.');
       }
     } catch (err) {
-      console.error(err);
+      console.error('triggerImmediatePublish error', err);
       alert('Error triggering publish.');
     } finally {
       setPublishingId(null);
     }
   }
 
+  // Called by VideoStudioClient when recording finishes
+  function handleRecordingComplete(blob) {
+    setPendingBlob(blob);
+    setShowSchedule(true);
+  }
+
+  function togglePlatform(p) {
+    setPlatformsSelected(prev => (prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p]));
+  }
+
+  function validateScheduledAtIso(isoString) {
+    try {
+      const d = new Date(isoString);
+      return !isNaN(d.getTime());
+    } catch {
+      return false;
+    }
+  }
+
+  async function saveAndSchedule() {
+    if (!pendingBlob) return alert('No recorded video available. Record first.');
+    if (!validateScheduledAtIso(scheduledAt)) return alert('Invalid scheduled datetime.');
+    if (!supabase) return alert('Supabase is not configured on the client. Scheduling is disabled.');
+
+    setSaving(true);
+
+    try {
+      const ext = pendingBlob.type.includes('mp4') ? 'mp4' : 'webm';
+      const fileName = `recordings/clip_${Date.now()}_${Math.random().toString(36).slice(2,9)}.${ext}`;
+
+      const { data: uploadData, error: uploadError } = await supabase.storage.from('recordings').upload(fileName, pendingBlob, {
+        contentType: pendingBlob.type,
+        upsert: false
+      });
+
+      if (uploadError) {
+        console.error('Storage upload error:', uploadError);
+        alert('Failed to upload video to storage. See console.');
+        setSaving(false);
+        return;
+      }
+
+      const getPublic = supabase.storage.from('recordings').getPublicUrl(fileName);
+      const media_url = (getPublic && getPublic.data && (getPublic.data.publicUrl || getPublic.data.publicURL)) || null;
+
+      const scheduled_for = new Date(scheduledAt).toISOString();
+      const payload = {
+        topic: topic || 'AI Generated Video',
+        caption_text: caption || '',
+        hashtags: hashtags || '',
+        media_url,
+        status: 'PENDING',
+        scheduled_for,
+        platforms: platformsSelected.join(',')
+      };
+
+      const { data: insertData, error: insertError } = await supabase.from('scheduled_posts').insert([payload]).select();
+
+      if (insertError) {
+        console.error('scheduled_posts insert error:', insertError);
+        alert('Failed to create scheduled post. See console for details.');
+        setSaving(false);
+        return;
+      }
+
+      setShowSchedule(false);
+      setPendingBlob(null);
+      setPlatformsSelected([]);
+      setTopic('');
+      setCaption('');
+      setHashtags('');
+
+      await fetchPosts();
+      alert('Post scheduled successfully.');
+    } catch (err) {
+      console.error('saveAndSchedule unexpected error:', err);
+      alert('Unexpected error while scheduling. See console.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const filteredPosts = posts.filter(p => filter === 'ALL' || p.status === filter);
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#020617', color: '#f8fafc', padding: '2rem', fontFamily: 'sans-serif' }}>
-      <header style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1e293b', paddingBottom: '1.5rem' }}>
+    <div className="min-h-screen bg-slate-950 text-slate-100 p-8">
+      <header className="max-w-6xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-8 border-b border-slate-800 pb-6">
         <div>
-          <h1 style={{ fontSize: '1.875rem', fontWeight: '800', margin: 0, color: '#38bdf8' }}>
-            OmniSocial AI Command Center
-          </h1>
-          <p style={{ color: '#94a3b8', fontSize: '0.875rem', marginTop: '0.25rem' }}>
-            Automated Cross-Platform Publishing Hub (YouTube, Instagram, TikTok, LinkedIn, X)
-          </p>
+          <h1 className="text-2xl font-extrabold text-sky-400">OmniSocial AI Command Center</h1>
+          <p className="text-sm text-slate-400 mt-1">Automated Cross-Platform Publishing Hub (YouTube, Instagram, TikTok, X)</p>
         </div>
 
-        <div style={{ display: 'flex', gap: '1rem' }}>
-          <div style={{ backgroundColor: '#0f172a', padding: '0.5rem 1rem', borderRadius: '0.5rem', textAlign: 'center', border: '1px solid #1e293b' }}>
-            <span style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>TOTAL</span>
-            <strong style={{ fontSize: '1.25rem', color: '#38bdf8' }}>{posts.length}</strong>
+        <div className="flex gap-3">
+          <div className="bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-center">
+            <div className="text-xs text-slate-400">TOTAL</div>
+            <div className="text-xl font-bold text-sky-400">{posts.length}</div>
           </div>
-          <div style={{ backgroundColor: '#0f172a', padding: '0.5rem 1rem', borderRadius: '0.5rem', textAlign: 'center', border: '1px solid #1e293b' }}>
-            <span style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>PENDING</span>
-            <strong style={{ fontSize: '1.25rem', color: '#fbbf24' }}>{posts.filter(p => p.status === 'PENDING').length}</strong>
+          <div className="bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-center">
+            <div className="text-xs text-slate-400">PENDING</div>
+            <div className="text-xl font-bold text-amber-400">{posts.filter(p => p.status === 'PENDING').length}</div>
           </div>
-          <div style={{ backgroundColor: '#0f172a', padding: '0.5rem 1rem', borderRadius: '0.5rem', textAlign: 'center', border: '1px solid #1e293b' }}>
-            <span style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>PUBLISHED</span>
-            <strong style={{ fontSize: '1.25rem', color: '#34d399' }}>{posts.filter(p => p.status === 'PUBLISHED').length}</strong>
+          <div className="bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-center">
+            <div className="text-xs text-slate-400">PUBLISHED</div>
+            <div className="text-xl font-bold text-emerald-400">{posts.filter(p => p.status === 'PUBLISHED').length}</div>
           </div>
         </div>
       </header>
 
-      <main style={{ maxWidth: '1200px', margin: '2rem auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            {['ALL', 'PENDING', 'PUBLISHED', 'FAILED'].map(status => (
-              <button
-                key={status}
-                onClick={() => setFilter(status)}
-                style={{
-                  padding: '0.5rem 1rem',
-                  borderRadius: '0.375rem',
-                  fontSize: '0.75rem',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  border: 'none',
-                  backgroundColor: filter === status ? '#0284c7' : '#0f172a',
-                  color: filter === status ? '#ffffff' : '#94a3b8'
-                }}
-              >
-                {status}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={fetchPosts}
-            style={{ padding: '0.5rem 1rem', borderRadius: '0.375rem', fontSize: '0.75rem', backgroundColor: '#1e293b', color: '#f8fafc', border: 'none', cursor: 'pointer' }}
-          >
-            🔄 Refresh
-          </button>
-        </div>
+      <main className="max-w-6xl mx-auto space-y-8">
+        <section>
+          <h2 className="text-lg font-semibold mb-3">Video Studio</h2>
+          <VideoStudioClient onRecordingComplete={handleRecordingComplete} />
+        </section>
 
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: '4rem', color: '#64748b' }}>Loading scheduled posts...</div>
-        ) : filteredPosts.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '4rem', backgroundColor: '#0f172a', borderRadius: '0.75rem', color: '#64748b' }}>
-            No posts found in this view.
+        <section>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex gap-2">
+              {['ALL', 'PENDING', 'PUBLISHED', 'FAILED'].map(status => (
+                <button
+                  key={status}
+                  onClick={() => setFilter(status)}
+                  className={`px-3 py-1 rounded-md text-sm font-semibold ${filter === status ? 'bg-sky-600 text-white' : 'bg-slate-900 text-slate-300'}`}
+                >
+                  {status}
+                </button>
+              ))}
+            </div>
+            <button onClick={fetchPosts} className="px-3 py-1 rounded-md bg-slate-800 text-slate-200">🔄 Refresh</button>
           </div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}>
-            {filteredPosts.map(post => (
-              <div key={post.id} style={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '0.75rem', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                {post.media_url && (
-                  <img src={post.media_url} alt={post.topic} style={{ width: '100%', height: '180px', objectFit: 'cover' }} />
-                )}
-                <div style={{ padding: '1.25rem', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                  <div>
-                    <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', color: '#f8fafc' }}>{post.topic}</h3>
-                    <p style={{ color: '#94a3b8', fontSize: '0.875rem', margin: '0 0 0.5rem 0', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                      {post.caption_text}
-                    </p>
-                    <p style={{ color: '#38bdf8', fontSize: '0.75rem', margin: '0 0 1rem 0' }}>{post.hashtags}</p>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '1rem', borderTop: '1px solid #1e293b' }}>
-                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                      {post.scheduled_for ? new Date(post.scheduled_for).toLocaleDateString() : '—'}
-                    </span>
-                    {post.status === 'PENDING' && (
-                      <button
-                        onClick={() => triggerImmediatePublish(post.id)}
-                        disabled={publishingId === post.id}
-                        style={{ backgroundColor: '#0284c7', color: 'white', border: 'none', padding: '0.4rem 0.8rem', borderRadius: '0.375rem', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer' }}
-                      >
-                        {publishingId === post.id ? 'Publishing...' : '🚀 Publish Now'}
-                      </button>
-                    )}
+
+          {loading ? (
+            <div className="text-center py-16 text-slate-500">Loading scheduled posts...</div>
+          ) : filteredPosts.length === 0 ? (
+            <div className="text-center py-16 rounded-lg bg-slate-900 text-slate-400">No posts found in this view.</div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredPosts.map(post => (
+                <div key={post.id} className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden flex flex-col">
+                  {post.media_url && <img src={post.media_url} alt={post.topic} className="w-full h-44 object-cover" />}
+                  <div className="p-4 flex-1 flex flex-col justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-100">{post.topic}</h3>
+                      <p className="text-sm text-slate-400 line-clamp-3 mt-1">{post.caption_text}</p>
+                      <p className="text-xs text-sky-400 mt-2">{post.hashtags}</p>
+                    </div>
+
+                    <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-800">
+                      <span className="text-xs text-slate-400">{post.scheduled_for ? new Date(post.scheduled_for).toLocaleString() : '—'}</span>
+                      {post.status === 'PENDING' && (
+                        <button
+                          onClick={() => triggerImmediatePublish(post.id)}
+                          disabled={publishingId === post.id}
+                          className="px-3 py-1 bg-sky-600 text-white rounded-md text-sm font-semibold disabled:opacity-60"
+                        >
+                          {publishingId === post.id ? 'Publishing...' : '🚀 Publish Now'}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </section>
       </main>
+
+      {/* Schedule modal */}
+      {showSchedule && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-slate-900 rounded-lg max-w-xl w-full p-6">
+            <h3 className="text-lg font-semibold mb-3">Schedule Post</h3>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm text-slate-300">Platforms</label>
+                <div className="flex gap-2 mt-2">
+                  {AVAILABLE_PLATFORMS.map(p => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => togglePlatform(p)}
+                      className={`px-3 py-1 rounded-md text-sm ${platformsSelected.includes(p) ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'}`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-300">Scheduled at (local)</label>
+                <input
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={e => setScheduledAt(e.target.value)}
+                  className="mt-2 w-full rounded-md bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-300">Topic / Title</label>
+                <input value={topic} onChange={e => setTopic(e.target.value)} className="mt-2 w-full rounded-md bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" />
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-300">Caption</label>
+                <textarea value={caption} onChange={e => setCaption(e.target.value)} className="mt-2 w-full rounded-md bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" rows={3} />
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-300">Hashtags (space-separated)</label>
+                <input value={hashtags} onChange={e => setHashtags(e.target.value)} className="mt-2 w-full rounded-md bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3">
+                <button onClick={() => { setShowSchedule(false); setPendingBlob(null); }} className="px-4 py-2 rounded-md bg-slate-700 text-white">Cancel</button>
+                <button onClick={saveAndSchedule} disabled={saving} className="px-4 py-2 rounded-md bg-emerald-500 text-slate-900">
+                  {saving ? 'Saving...' : 'Schedule Post'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
