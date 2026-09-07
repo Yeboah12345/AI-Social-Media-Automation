@@ -1,0 +1,63 @@
+/* Minimal global styles required by Next.js layout
+   This is intentionally lightweight so the build succeeds.
+   If you want full Tailwind support, install Tailwind and replace this file
+   with the @tailwind directives and generated styles.
+
+   To enable Tailwind:
+     npm install -D tailwindcss postcss autoprefixer
+     npx tailwindcss init -p
+   Then update this file to contain:
+     @tailwind base;
+     @tailwind components;
+     @tailwind utilities;
+
+   And ensure tailwind.config.js content includes ./app/**/* and ./app/components/**/*
+*/
+
+:root {
+  --bg: #020617;
+  --panel: #0f172a;
+  --muted: #64748b;
+  --accent: #38bdf8;
+  --text: #f8fafc;
+}
+
+html, body, #__next {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+}
+
+/* Basic utility classes used as fallbacks when Tailwind is not installed */
+.container {
+  max-width: 72rem;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+
+.btn {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  background: #1e293b;
+  color: var(--text);
+  cursor: pointer;
+  border: none;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid #1e293b;
+  border-radius: 0.75rem;
+}
+
+/* Make images and video responsive by default */
+img, video, canvas {
+  max-width: 100%;
+  height: auto;
+}
