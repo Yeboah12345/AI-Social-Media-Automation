@@ -46,7 +46,7 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
       const t = (timestamp - startTimeRef.current) / 1000; // seconds
 
       // Background gradient
-      const template = TEMPLATES.find(tpl => tpl.id === templateId) || TEMPLATES[0];
+      const template = TEMPLATES.find((tpl) => tpl.id === templateId) || TEMPLATES[0];
       const g = ctx.createLinearGradient(0, 0, width, height);
       g.addColorStop(0, template.colors[0]);
       g.addColorStop(1, template.colors[1]);
@@ -91,7 +91,7 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
 
   // Text wrapping helper
   function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
-    const words = text.split(' ');
+    const words = String(text).split(' ');
     const lines = [];
     let line = '';
 
@@ -125,10 +125,13 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
     recordedChunksRef.current = [];
 
     try {
-      const options = { mimeType: 'video/webm;codecs=vp9' };
-      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+      let options = { mimeType: 'video/webm;codecs=vp9' };
+      if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) {
+        options = { mimeType: 'video/webm' };
+      } else if (!MediaRecorder.isTypeSupported(options.mimeType)) {
         options.mimeType = 'video/webm;codecs=vp8';
       }
+
       const mr = new MediaRecorder(stream, options);
       mediaRecorderRef.current = mr;
 
@@ -198,7 +201,7 @@ export default function VideoStudioClient({ width = 1080, height = 1080, fps = 3
             <div>
               <label className="block text-sm font-medium text-slate-300">Template</label>
               <div className="mt-2 grid grid-cols-3 gap-2">
-                {TEMPLATES.map(tpl => (
+                {TEMPLATES.map((tpl) => (
                   <button
                     key={tpl.id}
                     onClick={() => setTemplateId(tpl.id)}
